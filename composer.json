@@ -1,0 +1,37 @@
+{
+    "name": "wu/giorgio-im-socket",
+    "description": "Laravel backend integration for Giorgio IM, powered by Giorgio Socket.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": "^8.1",
+        "ext-mbstring": "*",
+        "laravel/framework": "^10.0",
+        "wu/giorgio-socket": "^2.0",
+        "lustre/php-dfa-sensitive": "^1.4"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^8.0",
+        "phpunit/phpunit": "^10.1"
+    },
+    "autoload": {
+        "psr-4": {
+            "GiorgioImSocket\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "GiorgioImSocket\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "GiorgioImSocket\\Providers\\ImServiceProvider"
+            ]
+        }
+    },
+    "scripts": {
+        "test": "phpunit"
+    }
+}
