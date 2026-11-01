@@ -2,42 +2,34 @@
 
 [简体中文](README.md) | [English](README.en.md)
 
-Giorgio IM 的 Laravel 后端接入扩展，基于 `wu/giorgio-socket` 提供实时通信。配合 Vue / TypeScript 组件 `giorgio-im`，可接入好友、群聊和消息接口。
+[Giorgio IM](https://github.com/m-finder/giorgio-im) 的 Laravel 后端接入扩展，基于 `wu/giorgio-socket` 提供实时通信。
+
+![Giorgio IM](https://raw.githubusercontent.com/m-finder/giorgio-im/main/docs/images/chat-preview.png)
 
 ## 功能
 
 - 用户 IM 资料、头像、签名及在线状态。
-- 好友申请、消息盒子、好友分组、移动和移除好友。
+- 好友申请、消息盒子、好友分组、移动、删除和拉黑好友。
 - 群聊、成员、邀请、退出、群资料、群主与管理员权限、禁言及解散。
 - 私聊和群消息、历史记录、图片 / 文件 / 语音上传。
 - 已读回执、输入状态、上下线与签名变更通知。
+- 可扩展的聊天窗口工具栏。
 - 可选敏感词拦截；事务事件记录、游标补取和推送重试由 Socket 包提供。
 
-用户账号、注册、登录和退出由接入应用负责。本包使用现有用户，不创建账号或登录令牌，也不会自动向其他用户申请好友或加入某个默认群。
+用户账号、注册、登录和退出由接入应用负责。
+
+本包使用现有用户，不创建账号或登录令牌。
 
 ## 环境与安装
 
-需要 PHP 8.1+、Laravel 10、Swoole、mbstring、数据库和 Redis。Laravel 自身的 PHP 版本要求仍需满足；当前接入测试基于 Laravel 10。通过 Laravel 配置 Redis 客户端和数据库连接。
+需要 PHP 8.1+、Laravel 10、Swoole、mbstring、数据库和 Redis。
 
 ```bash
 composer require wu/giorgio-im-socket
 php artisan vendor:publish --provider="GiorgioImSocket\Providers\ImServiceProvider" --tag=im-config
 ```
 
-Composer 会安装 `wu/giorgio-socket ^2.0` 和敏感词依赖，Laravel 自动发现服务提供者。以上安装命令适用于包已收录到可访问的 Composer 仓库时。
-
-源码仓库：[m-finder/giorgio-im-socket](https://github.com/m-finder/giorgio-im-socket)。尚未收录 Packagist 或需要直接从 GitHub 安装时，先在应用的 `composer.json` 中合并以下配置：
-
-```json
-{
-  "repositories": [
-    { "type": "vcs", "url": "https://github.com/m-finder/giorgio-im-socket" },
-    { "type": "vcs", "url": "https://github.com/m-finder/giorgio-socket" }
-  ]
-}
-```
-
-随后执行 `composer require wu/giorgio-im-socket:^1.0`。开发本包时也可使用 path 仓库；注册、登录及演示应用不包含在发行包中。
+Laravel 自动发现服务提供者。
 
 ## 配置现有用户与认证
 
@@ -54,9 +46,19 @@ Composer 会安装 `wu/giorgio-socket ^2.0` 和敏感词依赖，Laravel 自动�
 ],
 ```
 
-`user_model` 为 `null` 时读取 `auth.providers.users.model`。模型应为现有的 Eloquent 认证用户模型，使用正整数主键，并与 IM 表使用同一数据库连接。主键列名、表名及昵称列可以自定义；UUID / ULID 用户主键暂不支持。首次初始化只创建 IM 资料和默认好友分组。用户表结构与配置需在首次迁移前确定，已有数据不可通过改配置直接切换用户表。
+`user_model` 为 `null` 时读取 `auth.providers.users.model`。模型应为现有的 Eloquent 认证用户模型，使用正整数主键，并与 IM 表使用同一数据库连接。
 
-本包不依赖 Sanctum。上面的认证中间件仅为示例，也可使用自己的 token、JWT 或 Session 认证，确保 `$request->user()` 返回当前用户。Session 认证需要在路由中间件中启用应用的 Session 与 CSRF 防护；前端请求也需遵循应用的 CSRF 约定。额外权限检查可继续放入 `auth_middleware`。
+主键列名、表名及昵称列可以自定义；UUID / ULID 用户主键暂不支持。
+
+首次初始化只创建 IM 资料和默认好友分组。
+
+用户表结构与配置需在首次迁移前确定，已有数据不可通过改配置直接切换用户表。
+
+本包不依赖 Sanctum。上面的认证中间件仅为示例，也可使用自己的 token、JWT 或 Session 认证，确保 `$request->user()` 返回当前用户。
+
+Session 认证需要在路由中间件中启用应用的 Session 与 CSRF 防护；前端请求也需遵循应用的 CSRF 约定。
+
+额外权限检查可继续放入 `auth_middleware`。
 
 ## 数据库与服务
 
@@ -131,7 +133,7 @@ class ImSocketIdentity implements SocketIdentity
 
 ## Vue 组件接入
 
-应用先完成自己的登录，再将已有凭据交给组件：
+需安装 [Giorgio IM](https://github.com/m-finder/giorgio-im) 的前端组件，然后引入使用：
 
 ```ts
 import { createConnectedIM } from 'giorgio-im'
@@ -211,9 +213,3 @@ im.open()
 安装开发依赖后运行 `composer test`。包内 Testbench 测试使用内存 SQLite、自定义用户表和无 Sanctum 的认证用户，验证路由、迁移、资料、好友、消息、回执及票据适配。
 
 MIT，见 [LICENSE](LICENSE)。
-
-### 删除好友与拉黑
-
-拉黑会原子删除双向好友关系、拒绝双方未处理的好友申请，并通过 `user.blocked` 通知操作者的所有连接；对方仅收到 `friend.removed`。解除拉黑发送 `user.unblocked`，不会自动添加好友。黑名单只允许本人查询与解除。
-
-删除或拉黑不删除消息。历史接口仅允许实际参与过该私聊的用户继续读取旧记录；发送、已读回执和输入状态仍需好友关系。共享群聊中的消息保留，由前端根据黑名单将对应用户置灰。黑名单通过新增迁移建立，升级后执行 `php artisan migrate`。
