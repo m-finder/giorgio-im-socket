@@ -77,7 +77,7 @@ class ImService
             ->where(fn ($query) => $query->where('sender_id', $userId)->orWhere('recipient_id', $userId))
             ->selectRaw('CASE WHEN sender_id = ? THEN recipient_id ELSE sender_id END AS peer_id, MAX(id) AS last_id', [$userId])
             ->groupBy('peer_id')->orderBy('last_id')->get()
-            ->map(fn ($row) => [...$this->user($row->peer_id), 'type' => 'friend'])->all();
+            ->map(fn ($row) => array_merge($this->user($row->peer_id), ['type' => 'friend']))->all();
     }
 
     public function friend(int $userId, int $friendId): void
@@ -126,19 +126,18 @@ class ImService
 
     public function members(int $id): array
     {
-        return DB::table('im_group_members')->where('group_id', $id)->orderBy('user_id')->get()->map(fn ($member) => [
-            ...$this->user($member->user_id), 'muted' => (bool) $member->muted,
-        ])->all();
+        return DB::table('im_group_members')->where('group_id', $id)->orderBy('user_id')->get()->map(fn ($member) => array_merge(
+            $this->user($member->user_id), ['muted' => (bool) $member->muted]
+        ))->all();
     }
 
     public function notice(object $notice): array
     {
-        return [
+        return array_merge([
             'id' => $notice->id, 'type' => $notice->type, 'title' => $notice->title, 'content' => $notice->content,
             'timestamp' => Carbon::parse($notice->created_at)->getTimestampMs(),
             'read' => $notice->read_at !== null, 'resolved' => $notice->resolved_at !== null,
-            ...($notice->sender_id ? ['contact' => $this->user($notice->sender_id)] : []),
-        ];
+        ], $notice->sender_id ? ['contact' => $this->user($notice->sender_id)] : []);
     }
 
     public function event(array $users, string $type, array $data): void
@@ -187,14 +186,13 @@ class ImService
     {
         $sender = $this->user($message->sender_id);
 
-        return [
+        return array_merge([
             'id' => $message->group_id ?? ($message->sender_id === $viewer ? $message->recipient_id : $message->sender_id),
             'type' => $message->group_id ? 'group' : 'friend', 'mid' => $message->client_mid,
             'fromid' => $message->sender_id, 'mine' => $message->sender_id === $viewer,
             'username' => $sender['username'], 'avatar' => $sender['avatar'], 'content' => $message->content,
             'timestamp' => Carbon::parse($message->created_at)->getTimestampMs(),
             'readBy' => DB::table('im_message_reads')->where('message_id', $message->id)->pluck('user_id')->all(),
-            ...($message->attachment ? ['attachment' => json_decode($message->attachment, true, 512, JSON_THROW_ON_ERROR)] : []),
-        ];
+        ], $message->attachment ? ['attachment' => json_decode($message->attachment, true, 512, JSON_THROW_ON_ERROR)] : []);
     }
 }

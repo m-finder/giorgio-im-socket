@@ -47,7 +47,7 @@ class ImController extends Controller
 
     public function ticket(Request $request): array
     {
-        $claims = [...app(SocketIdentity::class)->claims($request), 'user_id' => (int) $request->user()->getAuthIdentifier()];
+        $claims = array_merge(app(SocketIdentity::class)->claims($request), ['user_id' => (int) $request->user()->getAuthIdentifier()]);
         abort_unless(app(SocketIdentity::class)->resolve($claims) === $claims['user_id'], 403, 'Socket identity is not authorised.');
 
         return ['token' => app(ConnectionTicket::class)->issue($claims, config('im.socket_ticket_ttl'))];
@@ -83,13 +83,16 @@ class ImController extends Controller
             DB::table('im_profiles')->where('user_id', $id)->update(array_diff_key($data, ['username' => true, 'sign' => true]) + ['sign' => array_key_exists('sign', $data) ? ($data['sign'] ?? '') : $this->im->profile($id)->sign]);
             $this->im->event([$id], 'user.updated', $this->im->user($id, true));
             $contact = $this->im->user($id);
-            $this->im->event($this->im->audience($id), 'contact.updated', [
-                'contact' => [...$contact, 'type' => 'friend'],
-                ...($previous['sign'] !== $contact['sign'] && config('im.signature_notices', true) ? [
-                    'notice' => ['id' => $id, 'event' => 'signature', 'sign' => $contact['sign'], 'timestamp' => now()->getTimestampMs()],
-                ] : []),
-                ...($previous['status'] !== $contact['status'] ? ['presenceChanged' => true] : []),
-            ]);
+            $event = [
+                'contact' => array_merge($contact, ['type' => 'friend']),
+            ];
+            if ($previous['sign'] !== $contact['sign'] && config('im.signature_notices', true)) {
+                $event['notice'] = ['id' => $id, 'event' => 'signature', 'sign' => $contact['sign'], 'timestamp' => now()->getTimestampMs()];
+            }
+            if ($previous['status'] !== $contact['status']) {
+                $event['presenceChanged'] = true;
+            }
+            $this->im->event($this->im->audience($id), 'contact.updated', $event);
 
             return $this->im->user($id, true);
         }, 3);
@@ -106,8 +109,9 @@ class ImController extends Controller
 
         return DB::transaction(function () use ($request, $data) {
             $id = (int) $request->user()->getAuthIdentifier();
-            DB::table('im_friend_groups')->insertOrIgnore(['user_id' => $id, ...$data]);
-            $group = DB::table('im_friend_groups')->where(['user_id' => $id, ...$data])->first();
+            $attributes = array_merge(['user_id' => $id], $data);
+            DB::table('im_friend_groups')->insertOrIgnore($attributes);
+            $group = DB::table('im_friend_groups')->where($attributes)->first();
             $result = ['id' => $group->id, 'groupname' => $group->groupname, 'list' => DB::table('im_friends')->where(['user_id' => $id, 'group_id' => $group->id])->pluck('friend_id')->map(fn ($friend) => $this->im->user($friend))->all()];
             $this->im->event([$id], 'category.updated', $result);
 
@@ -124,7 +128,7 @@ class ImController extends Controller
             $this->im->friend($id, $friend);
             $this->im->ownedCategory($id, $data['groupId']);
             DB::table('im_friends')->where(['user_id' => $id, 'friend_id' => $friend])->update(['group_id' => $data['groupId']]);
-            $this->im->event([$id], 'friend.moved', ['id' => $friend, ...$data]);
+            $this->im->event([$id], 'friend.moved', array_merge(['id' => $friend], $data));
 
             return ['ok' => true];
         }, 3);
@@ -231,11 +235,15 @@ class ImController extends Controller
                     $this->im->ownedCategory($id, $data['groupId']);
                     foreach ([[$id, $item->sender_id, $data['groupId']], [$item->sender_id, $id, $this->im->category($item->sender_id)]] as [$user, $friend, $group]) {
                         DB::table('im_friends')->updateOrInsert(['user_id' => $user, 'friend_id' => $friend], ['group_id' => $group]);
-                        $this->im->event([$user], 'contact.updated', ['contact' => [...$this->im->user($friend), 'type' => 'friend'], 'groupId' => $group]);
+                        $this->im->event([$user], 'contact.updated', ['contact' => array_merge($this->im->user($friend), ['type' => 'friend']), 'groupId' => $group]);
                     }
                 }
             }
-            DB::table('im_notices')->where('id', $notice)->update(['read_at' => now(), ...($data['action'] !== 'read' ? ['resolved_at' => now(), 'resolution' => $data['action']] : [])]);
+            $noticeUpdate = ['read_at' => now()];
+            if ($data['action'] !== 'read') {
+                $noticeUpdate = array_merge($noticeUpdate, ['resolved_at' => now(), 'resolution' => $data['action']]);
+            }
+            DB::table('im_notices')->where('id', $notice)->update($noticeUpdate);
             $result = $this->im->notice(DB::table('im_notices')->where('id', $notice)->first());
             $this->im->event([$id], 'notice.updated', $result);
 
@@ -253,7 +261,7 @@ class ImController extends Controller
                 $this->im->friend($userId, $member);
             }
             $id = DB::table('im_groups')->insertGetId(['owner_id' => $userId, 'groupname' => $data['groupname'], 'created_at' => now(), 'updated_at' => now()]);
-            foreach (array_unique([$userId, ...$data['members']]) as $member) {
+            foreach (array_unique(array_merge([$userId], $data['members'])) as $member) {
                 DB::table('im_group_members')->insert(['group_id' => $id, 'user_id' => $member, 'joined_at' => now()]);
             }
             $this->im->groupEvent($id);
@@ -278,7 +286,7 @@ class ImController extends Controller
             if (isset($data['avatar'])) {
                 $this->image((int) $request->user()->getAuthIdentifier(), $data['avatar']);
             }
-            DB::table('im_groups')->where('id', $group)->update([...$data, 'updated_at' => now()]);
+            DB::table('im_groups')->where('id', $group)->update(array_merge($data, ['updated_at' => now()]));
             $this->im->groupEvent($group);
 
             return $this->im->groupContact($group);
