@@ -21,7 +21,46 @@ Laravel backend for Giorgio IM, with friendship, group, messaging and real-time 
 - [Giorgio IM Socket](https://packagist.org/packages/wu/giorgio-im-socket): Laravel instant messaging backend
 - [Giorgio Socket](https://packagist.org/packages/wu/giorgio-socket): Laravel WebSocket infrastructure package
 
-## Install
+## Install the local demo
+
+Requires PHP 8.1+ with pdo_sqlite and mbstring, Composer, Node.js/npm and Redis
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/m-finder/giorgio-im-socket/main/tools/setup.sh -o /tmp/giorgio-im-setup.sh
+bash /tmp/giorgio-im-setup.sh
+```
+
+The script first confirms the installation directory: if run from a Laravel root, it asks whether to install there; otherwise, it asks whether to create a Laravel project and where to install it
+
+It installs frontend and backend dependencies, writes the demo page and configuration, creates SQLite, runs migrations and builds the frontend
+
+The frontend package is hosted on GitHub Packages. The script prompts without echoing for a [classic PAT](https://github.com/settings/tokens) with `read:packages` permission and access to the package, then writes the project's `.npmrc`:
+
+```ini
+@m-finder:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GIORGIO_IM_NPM_TOKEN}
+```
+
+The token is used only for this dependency installation and is not written to a file. Set `GIORGIO_IM_NPM_TOKEN` when installing frontend dependencies manually later
+
+After installation, run one command in each of four terminals at the project root:
+
+```bash
+redis-server --bind 127.0.0.1 --port 16380 --save '' --appendonly no
+php artisan socket:start
+php artisan socket:events
+php artisan serve --host=127.0.0.1 --port=8001 --no-reload
+```
+
+Open `http://127.0.0.1:8001/im` and test private and group chats with two accounts
+
+The default HTTP/Socket/Redis ports are `8001/9501/16380`. Set `GIORGIO_IM_HTTP_PORT`, `GIORGIO_IM_SOCKET_PORT` and `GIORGIO_IM_REDIS_PORT` before running the script to change them. Follow the startup commands printed by the script
+
+## Manual installation
+
+Use the following steps to integrate with an existing Laravel application.
+
+### 1. Install dependencies
 
 Requires PHP 8.0.2+, Laravel 9+, mbstring, a database and Redis. Swoole is optional
 
@@ -30,14 +69,7 @@ composer require wu/giorgio-im-socket
 php artisan vendor:publish --provider="GiorgioImSocket\Providers\ImServiceProvider" --tag=im-config
 ```
 
-To upgrade the package and apply pending migrations:
-
-```bash
-composer update wu/giorgio-im-socket
-php artisan migrate
-```
-
-## Configure
+### 2. Configure authentication
 
 Set the existing user model and authentication middleware in `config/im.php`:
 
@@ -50,7 +82,11 @@ Set the existing user model and authentication middleware in `config/im.php`:
 ],
 ```
 
-Sanctum is optional. Use your application's authentication and ensure `$request->user()` returns the current user. User keys must be positive integers, and IM and user tables must share a database connection
+This package does not depend on Sanctum. Use your application's authentication and ensure `$request->user()` returns the current user
+
+User primary keys must be positive integers, and the user and IM tables must use the same database connection
+
+### 3. Database and Socket configuration
 
 Create the user table, then migrate and publish the Socket configuration:
 
@@ -74,29 +110,24 @@ IM_SIGNATURE_NOTICES_ENABLED=true
 IM_SENSITIVE_WORDS_ENABLED=false
 ```
 
-Start the services:
+### 4. Start services
 
 ```bash
 php artisan socket:start
 php artisan socket:events
 ```
 
-`auto` prefers Swoole outside Windows and uses the native PHP server otherwise. The native Windows driver supports up to 60 concurrent connections. IM configures Socket authentication, presence and the `im_events` table by default; set `configure_socket=false` to manage these yourself
+`auto` prefers Swoole outside Windows and uses the native PHP server otherwise
 
-Use HTTPS/WSS publicly and keep the push secret on the server. Restart services after configuration or code changes
+The native Windows driver supports up to 60 concurrent connections
 
-## Connection identity
+IM configures Socket authentication, presence callbacks and the `im_events` table by default. Disable `configure_socket` to configure them yourself
 
-Authenticated `POST /api/im/socket-ticket` issues a ticket for the current user. Tickets expire after 60 seconds; connections last up to one hour. The issuer and Socket server must share `APP_KEY`
+Use HTTPS/WSS for public access and keep the push secret on the server
 
-The default identity adapter checks that the user exists. To validate session or token revocation, implement `GiorgioImSocket\Contracts\SocketIdentity` and set `im.socket_identity`:
+*Restart the services after configuration or code changes*
 
-```php
-public function claims(Request $request): array;
-public function resolve(array $claims): ?int;
-```
-
-## Frontend
+### 5. Frontend integration
 
 ```ts
 import { createConnectedIM } from 'giorgio-im'
@@ -110,7 +141,16 @@ im.open()
 // Call im.destroy() when unmounting
 ```
 
-Keep `apiUrl` consistent with `routes.prefix`. The component gets the Socket URL from `/init`; AI and RTC signalling require application integration
+## Connection identity
+
+Authenticated `POST /api/im/socket-ticket` issues a ticket for the current user. Tickets expire after 60 seconds; connections last up to one hour. The issuer and Socket server must share `APP_KEY`
+
+The default identity adapter checks that the user exists. To validate session or token revocation, implement `GiorgioImSocket\Contracts\SocketIdentity` and set `im.socket_identity`:
+
+```php
+public function claims(Request $request): array;
+public function resolve(array $claims): ?int;
+```
 
 ## HTTP API
 
@@ -118,21 +158,18 @@ All routes require authentication except signed file reads. Use JSON with `Accep
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/init` | User, contacts, groups, notices, blocks, event cursor and Socket URL |
+| `GET` | `/init` | User, friends, groups, notices, blocks, event cursor and Socket URL |
 | `POST` | `/socket-ticket` | Issue connection ticket |
 | `GET` | `/events?after=ID` | Fetch missed events |
 | `PATCH` | `/user` | Update profile |
 | `GET` | `/users?q=text` | Search users |
-| `POST` | `/friend-groups` | Create friend category |
+| `POST` | `/friend-groups` | Create friend group |
 | `POST` | `/friend-requests` | Request friendship |
 | `PATCH` / `DELETE` | `/friends/{id}/group`, `/friends/{id}` | Move or remove friend |
 | `GET` / `POST` / `DELETE` | `/blocks`, `/blocks/{id}` | List, block or unblock |
 | `POST` | `/notices/{id}` | Resolve request or notice |
-| `POST` | `/groups` | Create group |
-| `PATCH` / `DELETE` | `/groups/{id}` | Update or dismiss group |
-| `GET` / `POST` | `/groups/{id}/members` | List or invite members |
-| `POST` | `/groups/{id}/leave` | Leave group |
-| `DELETE` | `/groups/{id}/members/{user}` | Remove member |
+| `POST` / `PATCH` / `DELETE` | `/groups`, `/groups/{id}` | Create, update or disband group |
+| `GET` / `POST` / `DELETE` | `/groups/{id}/members` | Manage group members |
 | `PATCH` | `/groups/{id}/mute`, `/groups/{id}/members/{user}/mute` | Mute group or member |
 | `PATCH` | `/groups/{id}/members/{user}/admin` | Set administrator |
 | `GET` / `POST` | `/messages` | History and send |
@@ -141,7 +178,7 @@ All routes require authentication except signed file reads. Use JSON with `Accep
 | `POST` | `/uploads` | Upload image, file or audio |
 | `GET` | `/files/{id}` | Read signed attachment |
 
-Message `type` is `friend` or `group`. Supply a UUID `mid` for idempotent retries. Upload attachments before sending
+The `type` for private and group chats is `friend` and `group`, respectively. Supply a UUID `mid` for idempotent retries and upload attachments before sending
 
 ## Other settings
 
@@ -156,12 +193,5 @@ Message `type` is `friend` or `group`. Supply a UUID `mid` for idempotent retrie
 | `IM_SENSITIVE_WORDS_ENABLED` | `false` |
 
 Set `IM_SENSITIVE_WORDS_PATH` for a custom dictionary
-
-## Blocking
-
-- Blocking removes mutual friendship, rejects pending requests and prevents new private messages while keeping history
-- Unblocking does not restore friendship
-
-Run tests with `composer test`
 
 MIT, see [LICENSE](LICENSE)

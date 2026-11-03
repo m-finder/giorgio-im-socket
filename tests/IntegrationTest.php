@@ -6,6 +6,7 @@ use GiorgioImSocket\Contracts\SocketIdentity;
 use GiorgioImSocket\Http\Controllers\ImController;
 use GiorgioImSocket\Services\ImService;
 use GiorgioImSocket\Services\SocketAuthenticator;
+use GiorgioImSocket\Services\SocketEvents;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
@@ -13,6 +14,18 @@ use Illuminate\Support\Str;
 
 class IntegrationTest extends TestCase
 {
+    public function test_socket_replay_reads_only_the_authenticated_users_im_inbox(): void
+    {
+        $alice = Account::create(['display_name' => 'Alice']);
+        $bob = Account::create(['display_name' => 'Bob']);
+        app(ImService::class)->event([$alice->getKey()], 'user.updated', ['id' => $alice->getKey(), 'username' => 'Alice']);
+        app(ImService::class)->event([$bob->getKey()], 'user.updated', ['id' => $bob->getKey(), 'username' => 'Bob']);
+        $page = app(SocketEvents::class)((string) $alice->getKey(), 0);
+        $this->assertCount(1, $page['events']);
+        $this->assertSame('Alice', $page['events'][0]['data']['username']);
+        $this->assertSame([], app(SocketEvents::class)((string) $alice->getKey(), $page['cursor'])['events']);
+    }
+
     public function test_package_registers_only_im_routes_and_initialises_existing_users(): void
     {
         $alice = Account::create(['display_name' => 'Alice']);

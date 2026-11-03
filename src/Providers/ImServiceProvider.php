@@ -4,6 +4,7 @@ namespace GiorgioImSocket\Providers;
 
 use GiorgioImSocket\Contracts\SocketIdentity;
 use GiorgioImSocket\Services\SocketAuthenticator;
+use GiorgioImSocket\Services\SocketEvents;
 use GiorgioImSocket\Services\SocketPresence;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
@@ -22,7 +23,7 @@ class ImServiceProvider extends ServiceProvider
     {
         if (config('im.configure_socket', true)) {
             config(['socket.authenticate' => SocketAuthenticator::class, 'socket.presence' => SocketPresence::class,
-                'socket.allow_client_messages' => false, 'socket.events.table' => 'im_events']);
+                'socket.allow_client_messages' => false, 'socket.events.table' => 'im_events', 'socket.events.reader' => SocketEvents::class]);
         }
         RateLimiter::for('im-api', fn (Request $request) => Limit::perMinute(240)->by($request->user()?->getAuthIdentifier() ?? $request->ip()));
         RateLimiter::for('im-files', fn (Request $request) => Limit::perMinute(120)->by($request->ip()));
