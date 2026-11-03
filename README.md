@@ -15,14 +15,52 @@ Giorgio IM 的 Laravel 后端，提供好友、群聊、消息和实时事件接
 
 <p align="center"><img src="https://repository-images.githubusercontent.com/1440670842/afcc1279-de3b-4152-99af-2892e552f1f4"></p>
 
-
 ## 相关包
 
 - [Giorgio IM](https://github.com/m-finder/giorgio-im)：Vue 3 + TypeScript 即时通讯组件
 - [Giorgio IM Socket](https://packagist.org/packages/wu/giorgio-im-socket)：Laravel 即时通讯后端
 - [Giorgio Socket](https://packagist.org/packages/wu/giorgio-socket)：Laravel WebSocket 底层服务相关包
 
-## 安装
+## 一键安装本地演示
+
+需要 PHP 8.1+（pdo_sqlite、mbstring）、Composer、Node.js/npm、Redis
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/m-finder/giorgio-im-socket/main/tools/setup.sh -o /tmp/giorgio-im-setup.sh
+bash /tmp/giorgio-im-setup.sh
+```
+
+脚本会先确认安装目录：当前是 Laravel 根目录时询问是否在当前目录安装，否则询问是否新建 Laravel 及安装目录
+
+自动安装前后端依赖、写入演示页面和配置、创建 SQLite、执行迁移并构建前端
+
+前端包位于 GitHub Packages，运行时会隐藏询问具有 `read:packages` 权限、能访问该包的 [classic PAT](https://github.com/settings/tokens)，然后写入项目 `.npmrc`：
+
+```ini
+@m-finder:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GIORGIO_IM_NPM_TOKEN}
+```
+
+token 仅用于本次依赖安装，不写入文件，以后手动安装前端依赖需设置 `GIORGIO_IM_NPM_TOKEN`
+
+完成后在项目根目录的四个终端分别启动：
+
+```bash
+redis-server --bind 127.0.0.1 --port 16380 --save '' --appendonly no
+php artisan socket:start
+php artisan socket:events
+php artisan serve --host=127.0.0.1 --port=8001 --no-reload
+```
+
+打开 `http://127.0.0.1:8001/im`，用两个账号测试私聊和群聊
+
+HTTP/Socket/Redis 默认端口为 `8001/9501/16380`，可在执行脚本前设置 `GIORGIO_IM_HTTP_PORT`、`GIORGIO_IM_SOCKET_PORT`、`GIORGIO_IM_REDIS_PORT`，启动命令以脚本输出为准
+
+## 手动安装
+
+以下步骤用于接入已有 Laravel 项目
+
+### 1. 安装依赖
 
 需要 PHP 8.0.2+、Laravel 9+、mbstring、数据库和 Redis，Swoole 可选
 
@@ -31,14 +69,7 @@ composer require wu/giorgio-im-socket
 php artisan vendor:publish --provider="GiorgioImSocket\Providers\ImServiceProvider" --tag=im-config
 ```
 
-升级本包后执行迁移：
-
-```bash
-composer update wu/giorgio-im-socket
-php artisan migrate
-```
-
-## 配置
+### 2. 配置认证
 
 在 `config/im.php` 指定现有用户模型和认证中间件：
 
@@ -51,7 +82,11 @@ php artisan migrate
 ],
 ```
 
-本包不依赖 Sanctum，认证方式由应用决定，只需保证 `$request->user()` 返回当前用户。用户主键须为正整数，用户表与 IM 表使用同一数据库连接
+本包不依赖 Sanctum，认证方式由应用决定，只需保证 `$request->user()` 返回当前用户
+
+用户主键须为正整数，用户表与 IM 表使用同一数据库连接
+
+### 3. 数据库与 Socket 配置
 
 先创建用户表，再迁移并发布 Socket 配置：
 
@@ -75,29 +110,24 @@ IM_SIGNATURE_NOTICES_ENABLED=true
 IM_SENSITIVE_WORDS_ENABLED=false
 ```
 
-启动服务：
+### 4. 启动服务
 
 ```bash
 php artisan socket:start
 php artisan socket:events
 ```
 
-`auto` 在非 Windows 环境优先使用 Swoole，否则使用 PHP 原生服务端。Windows 原生驱动最多支持 60 个并发连接。IM 默认配置 Socket 鉴权、在线回调和 `im_events` 事件表；关闭 `configure_socket` 可自行配置
+`auto` 在非 Windows 环境优先使用 Swoole，否则使用 PHP 原生服务端
 
-公网使用 HTTPS/WSS，推送密钥只保存在服务端。配置或代码变更后重启服务
+Windows 原生驱动最多支持 60 个并发连接
 
-## 连接认证
+IM 默认配置 Socket 鉴权、在线回调和 `im_events` 事件表，关闭 `configure_socket` 可自行配置
 
-认证后的 `POST /api/im/socket-ticket` 为当前用户签发短期票据。默认票据有效期 60 秒，连接最长一小时，签发端和 Socket 服务须使用同一个 `APP_KEY`
+公网使用 HTTPS/WSS，推送密钥只保存在服务端
 
-默认身份适配器只确认用户存在。需要检查登录会话或令牌是否吊销时，实现 `GiorgioImSocket\Contracts\SocketIdentity` 并配置 `im.socket_identity`：
+*配置或代码变更后重启服务*
 
-```php
-public function claims(Request $request): array;
-public function resolve(array $claims): ?int;
-```
-
-## 前端接入
+### 5. 前端接入
 
 ```ts
 import { createConnectedIM } from 'giorgio-im'
@@ -111,7 +141,16 @@ im.open()
 // 页面卸载时调用 im.destroy()
 ```
 
-`apiUrl` 应与 `routes.prefix` 一致。组件从初始化接口获取 Socket 地址并建立连接，AI 和 RTC 信令由应用接入
+## 连接认证
+
+认证后的 `POST /api/im/socket-ticket` 为当前用户签发短期票据,默认票据有效期 60 秒，连接最长一小时，签发端和 Socket 服务须使用同一个 `APP_KEY`
+
+默认身份适配器只确认用户存在，需要检查登录会话或令牌是否吊销时，实现 `GiorgioImSocket\Contracts\SocketIdentity` 并配置 `im.socket_identity`：
+
+```php
+public function claims(Request $request): array;
+public function resolve(array $claims): ?int;
+```
 
 ## HTTP 接口
 
@@ -139,7 +178,7 @@ im.open()
 | `POST` | `/uploads` | 上传图片、文件或语音 |
 | `GET` | `/files/{id}` | 读取签名附件 |
 
-私聊和群聊的 `type` 分别为 `friend`、`group`。发送消息需提供 UUID `mid`，用于幂等重试。附件须先上传
+私聊和群聊的 `type` 分别为 `friend`、`group`。发送消息需提供 UUID `mid`，用于幂等重试，附件须先上传
 
 ## 其他配置
 
@@ -154,12 +193,5 @@ im.open()
 | `IM_SENSITIVE_WORDS_ENABLED` | `false` |
 
 敏感词词库通过 `IM_SENSITIVE_WORDS_PATH` 指定
-
-## 拉黑
-
-- 拉黑会删除双方好友关系，拒绝未处理的好友申请和后续私聊，保留历史消息
-- 解除拉黑不会恢复好友关系
-
-运行测试：`composer test`
 
 MIT，见 [LICENSE](LICENSE)
