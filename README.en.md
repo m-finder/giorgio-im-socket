@@ -179,6 +179,7 @@ All routes require authentication except signed file reads. Use JSON with `Accep
 | `GET` | `/files/{id}` | Read signed attachment |
 
 The `type` for private and group chats is `friend` and `group`, respectively. Supply a UUID `mid` for idempotent retries and upload attachments before sending
+Send multiple images with text in one message using an `attachments` array and `content`. Single attachments continue to use `attachment`
 
 ## Other settings
 

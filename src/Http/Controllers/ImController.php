@@ -448,9 +448,12 @@ class ImController extends Controller
     {
         $data = $request->validate([
             'type' => 'required|in:friend,group', 'id' => 'required|integer', 'mid' => 'required|uuid', 'content' => 'required|string|max:20000',
-            'attachment' => 'sometimes|array:kind,url,name,duration', 'attachment.kind' => 'required_with:attachment|in:image,file,audio',
+            'attachment' => 'sometimes|array:kind,url,name,duration|prohibits:attachments', 'attachment.kind' => 'required_with:attachment|in:image,file,audio',
             'attachment.url' => 'required_with:attachment|string|max:2048', 'attachment.name' => 'required_with:attachment|string|max:255',
             'attachment.duration' => 'sometimes|numeric|min:0|max:120',
+            'attachments' => 'sometimes|array|min:1|prohibits:attachment', 'attachments.*' => 'required|array:kind,url,name',
+            'attachments.*.kind' => 'required|in:image', 'attachments.*.url' => 'required|string|max:2048',
+            'attachments.*.name' => 'required|string|max:255',
         ]);
         $data['id'] = (int) $data['id'];
 
@@ -463,20 +466,21 @@ class ImController extends Controller
                 $member = DB::table('im_group_members')->where(['group_id' => $group->id, 'user_id' => $id])->first();
                 abort_if($group->owner_id !== $id && ! $member->admin && ($group->mute_all || $member->muted), 403, 'You are muted.');
             }
+            $attachment = $data['attachment'] ?? $data['attachments'] ?? null;
             $message = DB::table('im_messages')->where(['sender_id' => $id, 'client_mid' => $data['mid']])->first();
             if ($message) {
-                abort_if(($message->group_id ?? $message->recipient_id) !== $data['id'] || (bool) $message->group_id !== ($data['type'] === 'group') || $message->content !== $data['content'] || json_decode($message->attachment ?? 'null', true) !== ($data['attachment'] ?? null), 409, 'Message ID already used.');
+                abort_if(($message->group_id ?? $message->recipient_id) !== $data['id'] || (bool) $message->group_id !== ($data['type'] === 'group') || $message->content !== $data['content'] || json_decode($message->attachment ?? 'null', true) !== $attachment, 409, 'Message ID already used.');
 
                 return $this->im->message($message, $id);
             }
-            if (isset($data['attachment'])) {
-                $kinds = $data['attachment']['kind'] === 'file' ? ['file', 'image'] : [$data['attachment']['kind']];
-                abort_unless(DB::table('im_uploads')->where(['user_id' => $id, 'url' => $data['attachment']['url']])->whereIn('kind', $kinds)->exists(), 422, 'Attachment must be uploaded first.');
+            foreach ($data['attachments'] ?? (isset($data['attachment']) ? [$data['attachment']] : []) as $item) {
+                $kinds = $item['kind'] === 'file' ? ['file', 'image'] : [$item['kind']];
+                abort_unless(DB::table('im_uploads')->where(['user_id' => $id, 'url' => $item['url']])->whereIn('kind', $kinds)->exists(), 422, 'Attachment must be uploaded first.');
             }
-            app(SensitiveWords::class)->validate([$data['content'], $data['attachment']['name'] ?? '']);
+            app(SensitiveWords::class)->validate([$data['content'], ...array_column($data['attachments'] ?? [], 'name'), $data['attachment']['name'] ?? '']);
             $messageId = DB::table('im_messages')->insertGetId([
                 'sender_id' => $id, 'recipient_id' => $data['type'] === 'friend' ? $data['id'] : null, 'group_id' => $data['type'] === 'group' ? $data['id'] : null,
-                'client_mid' => $data['mid'], 'content' => $data['content'], 'attachment' => isset($data['attachment']) ? json_encode($data['attachment'], JSON_THROW_ON_ERROR) : null,
+                'client_mid' => $data['mid'], 'content' => $data['content'], 'attachment' => $attachment ? json_encode($attachment, JSON_THROW_ON_ERROR) : null,
                 'created_at' => now(),
             ]);
             $message = DB::table('im_messages')->where('id', $messageId)->first();
