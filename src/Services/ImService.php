@@ -185,6 +185,7 @@ class ImService
     public function message(object $message, int $viewer): array
     {
         $sender = $this->user($message->sender_id);
+        $attachment = $message->attachment ? json_decode($message->attachment, true, 512, JSON_THROW_ON_ERROR) : null;
 
         return array_merge([
             'id' => $message->group_id ?? ($message->sender_id === $viewer ? $message->recipient_id : $message->sender_id),
@@ -193,6 +194,6 @@ class ImService
             'username' => $sender['username'], 'avatar' => $sender['avatar'], 'content' => $message->content,
             'timestamp' => Carbon::parse($message->created_at)->getTimestampMs(),
             'readBy' => DB::table('im_message_reads')->where('message_id', $message->id)->pluck('user_id')->all(),
-        ], $message->attachment ? ['attachment' => json_decode($message->attachment, true, 512, JSON_THROW_ON_ERROR)] : []);
+        ], $attachment ? (array_is_list($attachment) ? ['attachments' => $attachment] : ['attachment' => $attachment]) : []);
     }
 }

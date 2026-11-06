@@ -179,6 +179,7 @@ public function resolve(array $claims): ?int;
 | `GET` | `/files/{id}` | 读取签名附件 |
 
 私聊和群聊的 `type` 分别为 `friend`、`group`。发送消息需提供 UUID `mid`，用于幂等重试，附件须先上传
+多图消息可使用 `attachments` 图片数组与 `content` 文字一起发送；单附件继续使用 `attachment`
 
 ## 其他配置
 
