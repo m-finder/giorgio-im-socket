@@ -37,7 +37,7 @@ class ImController extends Controller
                         'id' => $group->id, 'groupname' => $group->groupname,
                         'list' => DB::table('im_friends')->where(['user_id' => $id, 'group_id' => $group->id])->pluck('friend_id')->map(fn ($friend) => $this->im->user($friend))->all(),
                     ])->all(),
-                    'group' => DB::table('im_group_members')->where('user_id', $id)->pluck('group_id')->map(fn ($group) => $this->im->groupContact($group))->all(),
+                    'group' => DB::table('im_group_members')->where('user_id', $id)->pluck('group_id')->map(fn ($group) => $this->im->groupContact($group, $id))->all(),
                 ],
                 'notices' => DB::table('im_notices')->where('user_id', $id)->orderByDesc('id')->limit(100)->get()->map(fn ($notice) => $this->im->notice($notice))->all(),
                 'cursor' => $cursor, 'socketUrl' => config('im.socket_url'),
@@ -266,7 +266,7 @@ class ImController extends Controller
             }
             $this->im->groupEvent($id);
 
-            return $this->im->groupContact($id);
+            return $this->im->groupContact($id, $userId);
         }, 3);
     }
 
@@ -289,7 +289,7 @@ class ImController extends Controller
             DB::table('im_groups')->where('id', $group)->update(array_merge($data, ['updated_at' => now()]));
             $this->im->groupEvent($group);
 
-            return $this->im->groupContact($group);
+            return $this->im->groupContact($group, (int) $request->user()->getAuthIdentifier());
         }, 3);
     }
 
@@ -341,6 +341,22 @@ class ImController extends Controller
             $this->im->groupEvent($group);
 
             return ['ok' => true];
+        }, 3);
+    }
+
+    /** Change only the authenticated member's notification preference. */
+    public function notifications(Request $request, int $group): array
+    {
+        $data = $request->validate(['muted' => 'required|boolean']);
+
+        return DB::transaction(function () use ($request, $group, $data) {
+            $userId = (int) $request->user()->getAuthIdentifier();
+            $this->im->group($userId, $group, true);
+            DB::table('im_group_members')->where(['group_id' => $group, 'user_id' => $userId])->update(['notifications_muted' => $data['muted']]);
+            $contact = $this->im->groupContact($group, $userId);
+            $this->im->event([$userId], 'group.updated', ['contact' => $contact]);
+
+            return $contact;
         }, 3);
     }
 
@@ -454,8 +470,19 @@ class ImController extends Controller
             'attachments' => 'sometimes|array|min:1|prohibits:attachment', 'attachments.*' => 'required|array:kind,url,name',
             'attachments.*.kind' => 'required|in:image', 'attachments.*.url' => 'required|string|max:2048',
             'attachments.*.name' => 'required|string|max:255',
+            'mentions' => 'sometimes|array|max:100|prohibited_unless:type,group',
+            'mentions.*' => 'required|array:id,username,start,end', 'mentions.*.id' => 'required|integer',
+            'mentions.*.username' => 'required|string|max:80', 'mentions.*.start' => 'required|integer|min:0|max:40000',
+            'mentions.*.end' => 'required|integer|min:1|max:40000',
+            'replyTo' => 'sometimes|required|array:mid,fromid', 'replyTo.mid' => 'required_with:replyTo|uuid',
+            'replyTo.fromid' => 'required_with:replyTo|integer',
         ]);
         $data['id'] = (int) $data['id'];
+        $data['mentions'] = array_map(fn ($mention) => ['id' => (int) $mention['id'], 'username' => $mention['username'],
+            'start' => (int) $mention['start'], 'end' => (int) $mention['end']], array_values($data['mentions'] ?? []));
+        if (isset($data['replyTo'])) {
+            $data['replyTo'] = ['mid' => $data['replyTo']['mid'], 'fromid' => (int) $data['replyTo']['fromid']];
+        }
 
         return DB::transaction(function () use ($request, $data) {
             $id = (int) $request->user()->getAuthIdentifier();
@@ -470,8 +497,28 @@ class ImController extends Controller
             $message = DB::table('im_messages')->where(['sender_id' => $id, 'client_mid' => $data['mid']])->first();
             if ($message) {
                 abort_if(($message->group_id ?? $message->recipient_id) !== $data['id'] || (bool) $message->group_id !== ($data['type'] === 'group') || $message->content !== $data['content'] || json_decode($message->attachment ?? 'null', true) !== $attachment, 409, 'Message ID already used.');
+                $reference = json_decode($message->reply_to ?? 'null', true);
+                abort_if(json_decode($message->mentions ?? '[]', true) !== $data['mentions']
+                    || ($reference ? ['mid' => $reference['mid'], 'fromid' => $reference['fromid']] : null) !== ($data['replyTo'] ?? null), 409, 'Message ID already used.');
 
                 return $this->im->message($message, $id);
+            }
+            $end = 0;
+            $memberIds = $data['mentions'] ? DB::table('im_group_members')->where('group_id', $data['id'])->pluck('user_id')->all() : [];
+            $utf16Content = mb_convert_encoding($data['content'], 'UTF-16LE', 'UTF-8');
+            foreach ($data['mentions'] as $mention) {
+                abort_unless(in_array($mention['id'], $memberIds, true) && $mention['id'] !== $id, 422, 'Mention must identify another group member.');
+                abort_if($mention['start'] < $end || $mention['end'] <= $mention['start'] || strlen($utf16Content) < $mention['end'] * 2
+                    || substr($utf16Content, $mention['start'] * 2, ($mention['end'] - $mention['start']) * 2)
+                        !== mb_convert_encoding('@'.$mention['username'], 'UTF-16LE', 'UTF-8'), 422, 'Invalid mention range.');
+                $end = $mention['end'];
+            }
+            $reference = null;
+            if (isset($data['replyTo'])) {
+                $original = $this->im->messages($id, $data['type'], $data['id'])
+                    ->where(['client_mid' => $data['replyTo']['mid'], 'sender_id' => $data['replyTo']['fromid']])->first();
+                abort_unless($original, 422, 'Quoted message is unavailable in this conversation.');
+                $reference = $this->im->messageReference($original);
             }
             foreach ($data['attachments'] ?? (isset($data['attachment']) ? [$data['attachment']] : []) as $item) {
                 $kinds = $item['kind'] === 'file' ? ['file', 'image'] : [$item['kind']];
@@ -481,6 +528,8 @@ class ImController extends Controller
             $messageId = DB::table('im_messages')->insertGetId([
                 'sender_id' => $id, 'recipient_id' => $data['type'] === 'friend' ? $data['id'] : null, 'group_id' => $data['type'] === 'group' ? $data['id'] : null,
                 'client_mid' => $data['mid'], 'content' => $data['content'], 'attachment' => $attachment ? json_encode($attachment, JSON_THROW_ON_ERROR) : null,
+                'mentions' => $data['mentions'] ? json_encode($data['mentions'], JSON_THROW_ON_ERROR) : null,
+                'reply_to' => $reference ? json_encode($reference, JSON_THROW_ON_ERROR) : null,
                 'created_at' => now(),
             ]);
             $message = DB::table('im_messages')->where('id', $messageId)->first();

@@ -29,6 +29,7 @@ Route::prefix(config('im.routes.prefix', 'api/im'))->middleware([...config('im.r
         Route::post('groups/{group}/members', [ImController::class, 'invite']);
         Route::post('groups/{group}/leave', [ImController::class, 'leave']);
         Route::delete('groups/{group}/members/{member}', [ImController::class, 'removeMember']);
+        Route::patch('groups/{group}/notifications', [ImController::class, 'notifications']);
         Route::patch('groups/{group}/mute', [ImController::class, 'mute']);
         Route::patch('groups/{group}/members/{member}/mute', [ImController::class, 'mute']);
         Route::patch('groups/{group}/members/{member}/admin', [ImController::class, 'admin']);
