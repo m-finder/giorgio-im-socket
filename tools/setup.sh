@@ -3,15 +3,15 @@
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    printf '%s\n' '用法：bash setup.sh [项目目录]' '检测到 Laravel 根目录时确认是否在该目录安装；否则询问是否新建 Laravel 10 和安装目录。' '需要 PHP 8.1+、Composer、Node.js/npm；安装时会隐藏输入 GitHub classic PAT（read:packages 权限）。'
+    printf '%s\n' '用法：bash setup.sh [项目目录]' '检测到 Laravel 根目录时确认是否在该目录安装；否则询问是否新建 Laravel 9 和安装目录。' '需要 PHP 8.0.2+、Composer、Node.js/npm；安装时会隐藏输入 GitHub classic PAT（read:packages 权限）。'
     exit 0
 fi
 if [[ $# -gt 1 ]]; then
     printf '%s\n' '用法：bash setup.sh [项目目录]' >&2
     exit 1
 fi
-command -v php >/dev/null 2>&1 || { printf '请先安装 PHP 8.1+。\n' >&2; exit 1; }
-php -r 'exit(PHP_VERSION_ID >= 80100 ? 0 : 1);' || { printf '请使用 PHP 8.1+。\n' >&2; exit 1; }
+command -v php >/dev/null 2>&1 || { printf '请先安装 PHP 8.0.2+。\n' >&2; exit 1; }
+php -r 'exit(PHP_VERSION_ID >= 80002 ? 0 : 1);' || { printf '请使用 PHP 8.0.2+。\n' >&2; exit 1; }
 
 is_laravel() {
     [[ -f "$1/artisan" && -f "$1/composer.json" && -f "$1/bootstrap/app.php" ]] &&
@@ -86,7 +86,7 @@ while [[ -z "$npm_token" ]]; do
 done
 
 if [[ "$new_project" == true ]]; then
-    composer create-project --prefer-dist --no-interaction laravel/laravel "$project_dir"
+    composer create-project --prefer-dist --no-interaction laravel/laravel:^9.0 "$project_dir"
 fi
 cd -- "$project_dir"
 if [[ -f bootstrap/cache/config.php ]]; then
@@ -607,7 +607,6 @@ class User extends Authenticatable
      */
     protected $casts = [
         'email_verified_at' => 'datetime',
-        'password' => 'hashed',
         'status' => 'integer',
     ];
 }
@@ -695,7 +694,7 @@ $provider = 'App\Providers\ImServiceProvider::class';
 if (! str_contains($app, $provider)) {
     $anchor = 'App\Providers\AppServiceProvider::class,';
     if (substr_count($app, $anchor) !== 1) {
-        fail('无法定位 config/app.php 的 AppServiceProvider；请使用 Laravel 10 的标准配置。');
+        fail('无法定位 config/app.php 的 AppServiceProvider；请使用 Laravel 9 或 Laravel 10 的标准配置。');
     }
     $app = str_replace($anchor, $anchor."\n        ".$provider.',', $app);
 }
@@ -730,7 +729,9 @@ if (! is_array($manifest)) {
     fail('package.json 必须是 JSON 对象。');
 }
 $manifest['scripts']['build:im'] = 'vite build --config vite.im.config.ts';
-$manifest['dependencies']['@m-finder/giorgio-im'] ??= '^0.1.2';
+if (! isset($manifest['dependencies']['@m-finder/giorgio-im']) || $manifest['dependencies']['@m-finder/giorgio-im'] === '^0.1.2') {
+    $manifest['dependencies']['@m-finder/giorgio-im'] = '^0.2.0';
+}
 $manifest['dependencies']['vue'] ??= '^3.5.0';
 $files['package.json'] = json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 

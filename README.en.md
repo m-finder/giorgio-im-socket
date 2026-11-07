@@ -18,32 +18,26 @@ Laravel backend for Giorgio IM, with friendship, group, messaging and real-time 
 ## Related packages
 
 - [Giorgio IM](https://github.com/m-finder/giorgio-im): Vue 3 + TypeScript instant messaging component
+- [Giorgio IM React](https://github.com/m-finder/giorgio-im-react): React + TypeScript instant messaging component
 - [Giorgio IM Socket](https://packagist.org/packages/wu/giorgio-im-socket): Laravel instant messaging backend
 - [Giorgio Socket](https://packagist.org/packages/wu/giorgio-socket): Laravel WebSocket infrastructure package
 
+## Quick demo package
+
+Download the `im-test-*` standalone executable for your platform (or the `.exe` for Windows) from the [Releases page](https://github.com/m-finder/giorgio-im-socket/releases). Run it and open the demo page shown in the terminal. No PHP, Node.js, Composer or Redis installation is needed; run it with `--help` for port options. A `.phar` version is also available and requires a compatible PHP installation.
+
 ## Install the local demo
 
-Requires PHP 8.1+ with pdo_sqlite and mbstring, Composer, Node.js/npm and Redis
+The demo installer requires PHP 8.0.2+ (`pdo_sqlite` and `mbstring`). New projects use Laravel 9; existing Laravel 9/10 projects must meet their own dependency requirements. It also needs Composer, Node.js/npm and Redis. The script installs the frontend and backend, configures SQLite and builds the demo page using the native PHP Socket driver.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/m-finder/giorgio-im-socket/main/tools/setup.sh -o /tmp/giorgio-im-setup.sh
 bash /tmp/giorgio-im-setup.sh
 ```
 
-The script first confirms the installation directory: if run from a Laravel root, it asks whether to install there; otherwise, it asks whether to create a Laravel project and where to install it
+Follow the prompts to install into the current Laravel project or create a project in an empty directory. Each run asks for a [GitHub classic PAT](https://github.com/settings/tokens) with `read:packages` permission and access to the frontend package. Input is hidden.
 
-It installs frontend and backend dependencies, writes the demo page and configuration, creates SQLite, runs migrations and builds the frontend
-
-The frontend package is hosted on GitHub Packages. The script prompts without echoing for a [classic PAT](https://github.com/settings/tokens) with `read:packages` permission and access to the package, then writes the project's `.npmrc`:
-
-```ini
-@m-finder:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=${GIORGIO_IM_NPM_TOKEN}
-```
-
-The token is used only for this dependency installation and is not written to a file. Set `GIORGIO_IM_NPM_TOKEN` when installing frontend dependencies manually later
-
-After installation, run one command in each of four terminals at the project root:
+After installation, open four terminals at the project root and run one command in each:
 
 ```bash
 redis-server --bind 127.0.0.1 --port 16380 --save '' --appendonly no
@@ -52,26 +46,33 @@ php artisan socket:events
 php artisan serve --host=127.0.0.1 --port=8001 --no-reload
 ```
 
-Open `http://127.0.0.1:8001/im` and test private and group chats with two accounts
+Open `http://127.0.0.1:8001/im` and register two accounts to try private and group chats. For custom ports, use the startup commands and address printed by the script.
 
-The default HTTP/Socket/Redis ports are `8001/9501/16380`. Set `GIORGIO_IM_HTTP_PORT`, `GIORGIO_IM_SOCKET_PORT` and `GIORGIO_IM_REDIS_PORT` before running the script to change them. Follow the startup commands printed by the script
+<details>
+<summary>Existing projects, ports and file changes</summary>
+
+- Select an existing project: `bash /tmp/giorgio-im-setup.sh /path/to/project`. Show usage: `bash /tmp/giorgio-im-setup.sh --help`.
+- HTTP, Socket and Redis ports default to `8001`, `9501` and `16380`. Set `GIORGIO_IM_HTTP_PORT`, `GIORGIO_IM_SOCKET_PORT` and `GIORGIO_IM_REDIS_PORT` before running the script to override them.
+- The script writes the demo page, User model, routes and configuration, then updates `.env` to use `storage/app/im-demo/database.sqlite`. Changed existing files are backed up under `storage/app/im-demo-backups/`. Rerunning preserves database contents and valid secrets.
+- The token is used only for this dependency installation and is never written to project files. `.npmrc` uses the `${GIORGIO_IM_NPM_TOKEN}` placeholder; set that environment variable before installing frontend dependencies manually later.
+
+</details>
 
 ## Manual installation
 
-Use the following steps to integrate with an existing Laravel application.
+For an existing Laravel project. Requires PHP 8.0.2+, Laravel 9+, compatible project dependencies, `mbstring`, a database and Redis.
 
-### 1. Install dependencies
-
-Requires PHP 8.0.2+, Laravel 9+, mbstring, a database and Redis. Swoole is optional
+### 1. Install and publish configuration
 
 ```bash
 composer require wu/giorgio-im-socket
 php artisan vendor:publish --provider="GiorgioImSocket\Providers\ImServiceProvider" --tag=im-config
+php artisan vendor:publish --provider="GiorgioSocket\Providers\SocketServiceProvider" --tag=socket-config
 ```
 
-### 2. Configure authentication
+### 2. Configure users and authentication
 
-Set the existing user model and authentication middleware in `config/im.php`:
+Set the user model and your application's authentication middleware in `config/im.php`:
 
 ```php
 'user_model' => App\Models\User::class,
@@ -82,20 +83,11 @@ Set the existing user model and authentication middleware in `config/im.php`:
 ],
 ```
 
-This package does not depend on Sanctum. Use your application's authentication and ensure `$request->user()` returns the current user
+`auth:sanctum` is an example and requires your application to set up Sanctum. Replace it with your own authentication if needed. After authentication, `$request->user()` must return the current user. User keys must be positive integers, and the user and IM tables must share a database connection.
 
-User primary keys must be positive integers, and the user and IM tables must use the same database connection
+### 3. Configure and start services
 
-### 3. Database and Socket configuration
-
-Create the user table, then migrate and publish the Socket configuration:
-
-```bash
-php artisan migrate
-php artisan vendor:publish --provider="GiorgioSocket\Providers\SocketServiceProvider" --tag=socket-config
-```
-
-Set `.env`:
+Set Socket values in `.env` and use your application's Redis configuration:
 
 ```dotenv
 SOCKET_HOST=127.0.0.1
@@ -105,32 +97,38 @@ SOCKET_PREFIX=giorgio-im:9501:
 SOCKET_PUSH_URL=http://127.0.0.1:9501/push
 SOCKET_PUSH_TOKEN=replace-with-a-private-random-secret
 IM_SOCKET_URL=ws://127.0.0.1:9501
-IM_UPLOAD_DISK=local
-IM_SIGNATURE_NOTICES_ENABLED=true
-IM_SENSITIVE_WORDS_ENABLED=false
 ```
 
-### 4. Start services
+Ensure the user table exists, then run migrations:
+
+```bash
+php artisan migrate
+```
+
+Start Socket and event delivery in separate terminals:
 
 ```bash
 php artisan socket:start
 php artisan socket:events
 ```
 
-`auto` prefers Swoole outside Windows and uses the native PHP server otherwise
+These addresses are for local development. Use HTTPS/WSS for public access and keep the push secret on the server. Restart both services after code or configuration changes.
 
-The native Windows driver supports up to 60 concurrent connections
+<details>
+<summary>Drivers and optional settings</summary>
 
-IM configures Socket authentication, presence callbacks and the `im_events` table by default. Disable `configure_socket` to configure them yourself
+- `auto` prefers Swoole outside Windows and uses native PHP otherwise. The native Windows driver supports up to 60 concurrent connections.
+- IM configures Socket authentication, presence callbacks and the `im_events` table by default. Disable `im.configure_socket` to configure them yourself.
+- See “Other settings” below for uploads, signature notices and sensitive word filtering.
 
-Use HTTPS/WSS for public access and keep the push secret on the server
+</details>
 
-*Restart the services after configuration or code changes*
+### 4. Connect the frontend
 
-### 5. Frontend integration
+Install the component using the [Vue](https://github.com/m-finder/giorgio-im/blob/main/README.en.md#install) or [React](https://github.com/m-finder/giorgio-im-react/blob/main/README.en.md#install) instructions, then connect with an access token obtained at login:
 
 ```ts
-import { createConnectedIM } from 'giorgio-im'
+import { createConnectedIM } from '@m-finder/giorgio-im'
 
 const im = await createConnectedIM({
   token: () => accessToken,
@@ -140,6 +138,8 @@ const im = await createConnectedIM({
 im.open()
 // Call im.destroy() when unmounting
 ```
+
+For React, import from `@m-finder/giorgio-im-react` instead.
 
 ## Connection identity
 
@@ -171,6 +171,7 @@ All routes require authentication except signed file reads. Use JSON with `Accep
 | `POST` / `PATCH` / `DELETE` | `/groups`, `/groups/{id}` | Create, update or disband group |
 | `GET` / `POST` / `DELETE` | `/groups/{id}/members` | Manage group members |
 | `PATCH` | `/groups/{id}/mute`, `/groups/{id}/members/{user}/mute` | Mute group or member |
+| `PATCH` | `/groups/{id}/notifications` | Set the current user's group notification preference with `{ muted: boolean }` |
 | `PATCH` | `/groups/{id}/members/{user}/admin` | Set administrator |
 | `GET` / `POST` | `/messages` | History and send |
 | `POST` | `/messages/read` | Read receipt |
@@ -180,6 +181,12 @@ All routes require authentication except signed file reads. Use JSON with `Accep
 
 The `type` for private and group chats is `friend` and `group`, respectively. Supply a UUID `mid` for idempotent retries and upload attachments before sending
 Send multiple images with text in one message using an `attachments` array and `content`. Single attachments continue to use `attachment`
+
+Group messages support `mentions: { id, username, start, end }[]`. Offsets use UTF-16 indices into the content, with an exclusive end. The server validates group membership, text ranges and overlapping spans.
+
+Group notification muting is a personal preference, independent of posting restrictions. Group contacts returned by initialisation and the preference endpoint include `notificationsMuted`; changes sync through `group.updated` only to the current user. All messages are still delivered, allowing the frontend to retain unread counts and alert on mentions of the current user. Run `php artisan migrate` after upgrading to add the personal group notification field.
+
+To quote a private or group message, submit `replyTo: { mid, fromid }`. The server only accepts visible messages from the current conversation and returns a snapshot with `username` and `content`, plus `attachment` or `attachments` for image thumbnails and captions. Both `mentions` and `replyTo` are included in live events and history and must remain unchanged when retrying the same `mid`. Run `php artisan migrate` after upgrading to add the message context fields.
 
 ## Other settings
 

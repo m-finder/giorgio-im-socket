@@ -111,17 +111,19 @@ class ImService
         return $member;
     }
 
-    public function groupContact(int $id): array
+    public function groupContact(int $id, ?int $viewer = null): array
     {
         $group = DB::table('im_groups')->where('id', $id)->first();
         abort_unless($group, 404);
 
-        return [
+        return array_merge([
             'id' => $id, 'type' => 'group', 'groupname' => $group->groupname, 'avatar' => $group->avatar,
             'ownerId' => $group->owner_id, 'muteAll' => (bool) $group->mute_all,
             'adminIds' => DB::table('im_group_members')->where(['group_id' => $id, 'admin' => true])->pluck('user_id')->all(),
             'members' => DB::table('im_group_members')->where('group_id', $id)->count(),
-        ];
+        ], $viewer === null ? [] : [
+            'notificationsMuted' => (bool) DB::table('im_group_members')->where(['group_id' => $id, 'user_id' => $viewer])->value('notifications_muted'),
+        ]);
     }
 
     public function members(int $id): array
@@ -186,14 +188,35 @@ class ImService
     {
         $sender = $this->user($message->sender_id);
         $attachment = $message->attachment ? json_decode($message->attachment, true, 512, JSON_THROW_ON_ERROR) : null;
+        $reference = ! empty($message->reply_to) ? json_decode($message->reply_to, true, 512, JSON_THROW_ON_ERROR) : null;
+        $id = $message->group_id ?? ($message->sender_id === $viewer ? $message->recipient_id : $message->sender_id);
+        if ($reference && ! isset($reference['attachment']) && ! isset($reference['attachments'])) {
+            $original = $this->messages($viewer, $message->group_id ? 'group' : 'friend', $id, true)
+                ->where(['client_mid' => $reference['mid'], 'sender_id' => $reference['fromid']])->first();
+            if ($original) {
+                $reference += $this->messageReference($original);
+            }
+        }
 
         return array_merge([
-            'id' => $message->group_id ?? ($message->sender_id === $viewer ? $message->recipient_id : $message->sender_id),
+            'id' => $id,
             'type' => $message->group_id ? 'group' : 'friend', 'mid' => $message->client_mid,
             'fromid' => $message->sender_id, 'mine' => $message->sender_id === $viewer,
             'username' => $sender['username'], 'avatar' => $sender['avatar'], 'content' => $message->content,
             'timestamp' => Carbon::parse($message->created_at)->getTimestampMs(),
             'readBy' => DB::table('im_message_reads')->where('message_id', $message->id)->pluck('user_id')->all(),
-        ], $attachment ? (array_is_list($attachment) ? ['attachments' => $attachment] : ['attachment' => $attachment]) : []);
+        ], $attachment ? (isset($attachment[0]) ? ['attachments' => $attachment] : ['attachment' => $attachment]) : [],
+            ! empty($message->mentions) ? ['mentions' => json_decode($message->mentions, true, 512, JSON_THROW_ON_ERROR)] : [],
+            $reference ? ['replyTo' => $reference] : []);
+    }
+
+    /** Snapshot an authorised original without recursively copying its own quote. */
+    public function messageReference(object $message): array
+    {
+        $attachment = $message->attachment ? json_decode($message->attachment, true, 512, JSON_THROW_ON_ERROR) : null;
+
+        return array_merge(['mid' => $message->client_mid, 'fromid' => $message->sender_id,
+            'username' => $this->user($message->sender_id)['username'], 'content' => $message->content],
+            $attachment ? (isset($attachment[0]) ? ['attachments' => $attachment] : ['attachment' => $attachment]) : []);
     }
 }
