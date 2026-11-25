@@ -176,6 +176,7 @@ All routes require authentication except signed file reads. Use JSON with `Accep
 | `GET` / `POST` | `/messages` | History and send |
 | `POST` | `/messages/read` | Read receipt |
 | `POST` | `/conversations/typing` | Typing state |
+| `POST` | `/calls/signals` | One-to-one and group voice and video call signalling |
 | `POST` | `/uploads` | Upload image, file or audio |
 | `GET` | `/files/{id}` | Read signed attachment |
 
@@ -187,6 +188,10 @@ Group messages support `mentions: { id, username, start, end }[]`. Offsets use U
 Group notification muting is a personal preference, independent of posting restrictions. Group contacts returned by initialisation and the preference endpoint include `notificationsMuted`; changes sync through `group.updated` only to the current user. All messages are still delivered, allowing the frontend to retain unread counts and alert on mentions of the current user. Run `php artisan migrate` after upgrading to add the personal group notification field.
 
 To quote a private or group message, submit `replyTo: { mid, fromid }`. The server only accepts visible messages from the current conversation and returns a snapshot with `username` and `content`, plus `attachment` or `attachments` for image thumbnails and captions. Both `mentions` and `replyTo` are included in live events and history and must remain unchanged when retrying the same `mid`. Run `php artisan migrate` after upgrading to add the message context fields.
+
+Run `php artisan migrate` before enabling calls. Signals use existing `call.signal` Socket events. Offers and answers accept `type: 'voice' | 'video'`; voice signals without `type` remain supported. Only friends can initiate calls and only participants can control them. Incoming calls expire after 60 seconds; connected clients renew every 30 seconds. Browser WebRTC carries audio and video; configure STUN/TURN in the frontend for connectivity across networks.
+
+Group calls use the same `/calls/signals` endpoint and `call.signal` event, with `groupId` identifying the group. A member sends `invite` with `type`, and the server invites the other members. Invitees send `join` to enter; `join` and `leave` events include the server-confirmed `participants` list. For `offer` and `answer`, `id` identifies the joined peer receiving the SDP. Other actions use the group ID. Up to 4 participants join a browser WebRTC mesh. Joined members also occupy their one-to-one call slot. Invitations expire after 60 seconds; joined members send `keepalive` every 30 seconds to maintain a 90-second lease. `leave`, `reject` and an ordinary member's `end` leave only that member; the creator's `end` ends the room.
 
 ## Other settings
 
