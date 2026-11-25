@@ -1,5 +1,6 @@
 <?php
 
+use GiorgioImSocket\Http\Controllers\CallController;
 use GiorgioImSocket\Http\Controllers\ImController;
 use GiorgioImSocket\Http\Controllers\UploadController;
 use GiorgioImSocket\Http\Middleware\EnsureImUser;
@@ -37,6 +38,7 @@ Route::prefix(config('im.routes.prefix', 'api/im'))->middleware([...config('im.r
         Route::post('messages', [ImController::class, 'send']);
         Route::post('messages/read', [ImController::class, 'read']);
         Route::post('conversations/typing', [ImController::class, 'typing']);
+        Route::post('calls/signals', [CallController::class, 'signal']);
         Route::post('uploads', [UploadController::class, 'store']);
     });
 });

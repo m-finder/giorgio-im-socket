@@ -729,8 +729,8 @@ if (! is_array($manifest)) {
     fail('package.json 必须是 JSON 对象。');
 }
 $manifest['scripts']['build:im'] = 'vite build --config vite.im.config.ts';
-if (! isset($manifest['dependencies']['@m-finder/giorgio-im']) || in_array($manifest['dependencies']['@m-finder/giorgio-im'], ['^0.1.2', '^0.2.0'], true)) {
-    $manifest['dependencies']['@m-finder/giorgio-im'] = '^0.3.0';
+if (! isset($manifest['dependencies']['@m-finder/giorgio-im']) || in_array($manifest['dependencies']['@m-finder/giorgio-im'], ['^0.1.2', '^0.2.0', '^0.3.0'], true)) {
+    $manifest['dependencies']['@m-finder/giorgio-im'] = '^0.4.0';
 }
 $manifest['dependencies']['vue'] ??= '^3.5.0';
 $files['package.json'] = json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
