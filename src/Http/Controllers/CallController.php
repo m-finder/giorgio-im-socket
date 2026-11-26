@@ -15,16 +15,17 @@ class CallController extends Controller
     {
         $data = $request->validate([
             'id' => 'required|integer|min:1', 'callId' => 'required|uuid',
-            'action' => 'required|in:invite,join,leave,offer,answer,end,reject,keepalive',
+            'action' => 'required|in:'.($request->has('groupId')
+                ? 'invite,join,leave,offer,answer,end,reject,keepalive'
+                : 'offer,answer,end,reject,keepalive'),
             'groupId' => 'sometimes|required|integer|min:1',
-            'type' => 'sometimes|required|in:voice,video',
+            'type' => 'required_if:action,invite|filled|in:voice,video',
             'sdp' => 'required_if:action,offer,answer|string|max:30000',
         ]);
         $sender = (int) $request->user()->getAuthIdentifier();
         if (isset($data['groupId'])) {
             return $this->groupSignal($data, $sender, $im);
         }
-        abort_unless(in_array($data['action'], ['offer', 'answer', 'end', 'reject', 'keepalive']), 422, 'Group call required.');
         $recipient = (int) $data['id'];
         abort_if($sender === $recipient, 422, 'Cannot call yourself.');
 
@@ -34,10 +35,8 @@ class CallController extends Controller
             if ($data['action'] === 'offer') {
                 $im->friend($sender, $recipient);
                 abort_if($call !== null, 409, 'Call already exists.');
-                abort_if(DB::table('im_calls')->where('state', '!=', 'ended')->where('expires_at', '>', now())
-                    ->where(fn ($query) => $query->whereIn('caller_id', [$sender, $recipient])->orWhereIn('recipient_id', [$sender, $recipient]))->exists(), 423, 'User is busy.');
-                abort_if(DB::table('im_group_call_members')->whereIn('user_id', [$sender, $recipient])
-                    ->where('state', 'joined')->where('expires_at', '>', now())->exists(), 423, 'User is busy.');
+
+                $this->assertAvailable([$sender, $recipient]);
                 DB::table('im_calls')->insert([
                     'id' => $data['callId'], 'caller_id' => $sender, 'recipient_id' => $recipient,
                     'state' => 'ringing', 'expires_at' => now()->addSeconds(60),
@@ -53,11 +52,10 @@ class CallController extends Controller
                 if ($data['action'] === 'answer' || $data['action'] === 'reject') {
                     abort_unless($call->recipient_id === $sender && $call->state === 'ringing', 409, 'Call is no longer ringing.');
                 }
-                if ($data['action'] === 'answer') {
+                if (in_array($data['action'], ['answer', 'keepalive'])) {
                     $im->friend($sender, $recipient);
                 }
                 if ($data['action'] === 'keepalive') {
-                    $im->friend($sender, $recipient);
                     abort_unless($call->state === 'accepted', 409, 'Call is not connected.');
                     DB::table('im_calls')->where('id', $data['callId'])->update(['expires_at' => now()->addSeconds(90)]);
 
@@ -100,10 +98,9 @@ class CallController extends Controller
             $room = DB::table('im_group_calls')->where('id', $data['callId'])->lockForUpdate()->first();
             if ($data['action'] === 'invite') {
                 abort_if($room !== null, 409, 'Call already exists.');
-                abort_unless(isset($data['type']), 422, 'Call type required.');
                 abort_if(DB::table('im_group_calls')->where('group_id', $group->id)->where('state', 'active')
                     ->where('expires_at', '>', now())->exists(), 423, 'Group call already exists.');
-                $this->assertAvailable($sender);
+                $this->assertAvailable([$sender]);
                 DB::table('im_group_calls')->insert([
                     'id' => $data['callId'], 'group_id' => $group->id, 'creator_id' => $sender,
                     'type' => $data['type'], 'state' => 'active', 'expires_at' => now()->addSeconds(90),
@@ -117,15 +114,18 @@ class CallController extends Controller
                 $room = DB::table('im_group_calls')->where('id', $data['callId'])->first();
             } else {
                 abort_unless($room && $room->group_id === $group->id, 404, 'Call not found.');
-                abort_if($room->state !== 'active' || Carbon::parse($room->expires_at)->lte(now()), 409, 'Call has ended.');
-                DB::table('im_group_call_members')->where('call_id', $room->id)
+                $ended = $room->state !== 'active' || Carbon::parse($room->expires_at)->lte(now());
+                DB::table('im_group_call_members')->where('call_id', $room->id)->whereIn('state', ['invited', 'joined'])
                     ->where(fn ($query) => $query->where('expires_at', '<=', now())->orWhereNotIn('user_id', $memberIds))
                     ->update(['state' => 'left', 'expires_at' => now()]);
                 $member = DB::table('im_group_call_members')->where(['call_id' => $room->id, 'user_id' => $sender])->first();
+                if ($member && in_array($data['action'], ['leave', 'reject', 'end']) && ($ended || $member->state === 'left')) {
+                    return ['ok' => true];
+                }
+                abort_if($ended, 409, 'Call has ended.');
                 abort_unless($member && in_array($member->state, ['invited', 'joined']), 409, 'Call membership required.');
                 if ($data['action'] === 'join') {
-                    $this->assertAvailable($sender, $room->id);
-                    abort_if($member->state !== 'joined' && DB::table('im_group_call_members')->where(['call_id' => $room->id, 'state' => 'joined'])->count() >= 4, 409, 'Call is full.');
+                    $this->assertAvailable([$sender], $room->id);
                     DB::table('im_group_call_members')->where(['call_id' => $room->id, 'user_id' => $sender])
                         ->update(['state' => 'joined', 'expires_at' => now()->addSeconds(90)]);
                 } elseif (in_array($data['action'], ['offer', 'answer', 'keepalive'])) {
@@ -133,20 +133,22 @@ class CallController extends Controller
                     if ($data['action'] !== 'keepalive') {
                         abort_if((int) $data['id'] === $sender, 422, 'Cannot call yourself.');
                         $recipient = DB::table('im_group_call_members')->where(['call_id' => $room->id, 'user_id' => $data['id']])->first();
-                        abort_unless($recipient && in_array((int) $data['id'], $memberIds, true), 404, 'Call participant not found.');
+                        abort_unless($recipient, 404, 'Call participant not found.');
                         abort_unless($recipient->state === 'joined', 409, 'Peer has not joined.');
                     }
                     DB::table('im_group_call_members')->where(['call_id' => $room->id, 'user_id' => $sender])
                         ->update(['expires_at' => now()->addSeconds(90)]);
                 } else {
-                    abort_unless(in_array($data['action'], ['leave', 'reject', 'end']), 422, 'Invalid group call action.');
-                    $end = $data['action'] === 'end' && $room->creator_id === $sender;
+                    $remaining = DB::table('im_group_call_members')->where(['call_id' => $room->id, 'state' => 'joined'])
+                        ->where('user_id', '!=', $sender)->count();
+                    $end = $remaining === 0 || ($remaining === 1 && $member->state === 'joined');
                     DB::table('im_group_call_members')->where('call_id', $room->id)
                         ->when(! $end, fn ($query) => $query->where('user_id', $sender))
                         ->update(['state' => 'left', 'expires_at' => now()]);
-                    if ($end || ! DB::table('im_group_call_members')->where(['call_id' => $room->id, 'state' => 'joined'])->exists()) {
+                    if ($end) {
                         DB::table('im_group_calls')->where('id', $room->id)->update(['state' => 'ended', 'expires_at' => now()]);
                     }
+                    $data['action'] = $end ? 'end' : 'leave';
                 }
                 if (in_array($data['action'], ['join', 'offer', 'answer', 'keepalive'])) {
                     DB::table('im_group_calls')->where('id', $room->id)->update(['expires_at' => now()->addSeconds(90)]);
@@ -159,7 +161,7 @@ class CallController extends Controller
                 ->orderBy('user_id')->pluck('user_id')->map(fn ($id) => $im->user($id))->all();
             $signal = [
                 'callId' => $room->id, 'groupId' => $group->id, 'id' => $sender,
-                'action' => in_array($data['action'], ['end', 'reject']) && $room->creator_id !== $sender ? 'leave' : $data['action'],
+                'action' => $data['action'],
                 'type' => $room->type, 'contact' => $im->user($sender), 'group' => $im->groupContact($group->id),
                 'participants' => $participants, 'expiresAt' => now()->addSeconds($data['action'] === 'invite' ? 60 : 90)->getTimestampMs(),
             ];
@@ -177,11 +179,11 @@ class CallController extends Controller
         }, 3);
     }
 
-    private function assertAvailable(int $user, ?string $except = null): void
+    private function assertAvailable(array $users, ?string $except = null): void
     {
         abort_if(DB::table('im_calls')->where('state', '!=', 'ended')->where('expires_at', '>', now())
-            ->where(fn ($query) => $query->where('caller_id', $user)->orWhere('recipient_id', $user))->exists(), 423, 'User is busy.');
-        abort_if(DB::table('im_group_call_members')->where(['user_id' => $user, 'state' => 'joined'])->where('expires_at', '>', now())
+            ->where(fn ($query) => $query->whereIn('caller_id', $users)->orWhereIn('recipient_id', $users))->exists(), 423, 'User is busy.');
+        abort_if(DB::table('im_group_call_members')->whereIn('user_id', $users)->where('state', 'joined')->where('expires_at', '>', now())
             ->when($except !== null, fn ($query) => $query->where('call_id', '!=', $except))->exists(), 423, 'User is busy.');
     }
 }
