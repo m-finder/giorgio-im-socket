@@ -115,14 +115,15 @@ $files = [
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <base href="{{ str_ends_with(request()->getPathInfo(), '/') ? '../' : './' }}">
     <title>Giorgio IM · 即时通讯</title>
-    <link rel="stylesheet" href="{{ asset('im-demo/app.css') }}">
+    <link rel="stylesheet" href="./im-demo/app.css">
 </head>
 <body>
 <main class="demo-shell">
     <section class="demo-card" aria-labelledby="im-account">
         <nav class="demo-nav" aria-label="首页">
-            <a class="demo-brand" href="{{ url('/im') }}">
+            <a class="demo-brand" href="./im">
                 <svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M25 5H7a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3h3v5l7-5h8a3 3 0 0 0 3-3V8a3 3 0 0 0-3-3Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M10 12h12M10 17h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
                 GIORGIO <span>IM</span>
             </a>
@@ -146,7 +147,7 @@ $files = [
         <p class="demo-note">注册后自动加入 <strong>GIORGIO-IM</strong> 群聊，<br>并与所有已有用户互加好友，立即开始私聊。</p>
     </section>
 </main>
-<script type="module" src="{{ asset('im-demo/app.js') }}"></script>
+<script type="module" src="./im-demo/app.js"></script>
 </body>
 </html>
 GIORGIO_IM_FILE_0,
@@ -170,12 +171,13 @@ const email = form.elements.namedItem('email') as HTMLInputElement
 const password = form.elements.namedItem('password') as HTMLInputElement
 const confirmation = form.elements.namedItem('password_confirmation') as HTMLInputElement
 const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]')!
+const apiUrl = new URL('./api/im', document.baseURI).href
 const transport: ImTransportOptions = {
   requireTLS: form.dataset.requireTls !== 'false',
   allowInsecureLocalhost: form.dataset.allowInsecureLocalhost === 'true',
 }
 function request(path: string, options: RequestInit): Promise<Response> {
-  const url = `/api/im${path}`
+  const url = `${apiUrl}${path}`
   assertImTransport(url, 'http', transport)
   return fetch(url, { ...options, redirect: 'error' })
 }
@@ -210,9 +212,10 @@ function clearSession(): void {
 
 async function connect(accountName: string): Promise<void> {
   im = await createConnectedIM({
+    apiUrl,
     token: () => bearer,
     transport,
-    onConnectionChange(value) { state.textContent = statuses[value]; state.dataset.state = value },
+    onConnectionChange(value) { state.textContent = statuses[value]; state.dataset.state = value; if (value === 'reconnecting' || value === 'online') feedback.textContent = '' },
     onError(error) { feedback.textContent = error.message },
     widget: { locale: 'zh-CN' },
   })
@@ -361,6 +364,7 @@ GIORGIO_IM_FILE_2,
 import { defineConfig } from 'vite'
 
 export default defineConfig({
+  base: './',
   publicDir: false,
   build: {
     outDir: 'public/im-demo',
@@ -729,8 +733,8 @@ if (! is_array($manifest)) {
     fail('package.json 必须是 JSON 对象。');
 }
 $manifest['scripts']['build:im'] = 'vite build --config vite.im.config.ts';
-if (! isset($manifest['dependencies']['@m-finder/giorgio-im']) || in_array($manifest['dependencies']['@m-finder/giorgio-im'], ['^0.1.2', '^0.2.0', '^0.3.0'], true)) {
-    $manifest['dependencies']['@m-finder/giorgio-im'] = '^0.4.0';
+if (! isset($manifest['dependencies']['@m-finder/giorgio-im']) || in_array($manifest['dependencies']['@m-finder/giorgio-im'], ['^0.1.2', '^0.2.0', '^0.3.0', '^0.4.0'], true)) {
+    $manifest['dependencies']['@m-finder/giorgio-im'] = '^0.5.0';
 }
 $manifest['dependencies']['vue'] ??= '^3.5.0';
 $files['package.json'] = json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);

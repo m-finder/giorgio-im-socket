@@ -191,7 +191,7 @@ public function resolve(array $claims): ?int;
 
 启用通话前需运行 `php artisan migrate`。信令通过现有 `call.signal` Socket 事件投递，`offer`、`answer` 可携带 `type: 'voice' | 'video'`，兼容不带 `type` 的语音信令。仅允许好友发起、参与者操作；来电 60 秒过期，接听后客户端每 30 秒续期，断开后自动释放占线状态。音视频由浏览器 WebRTC 传输，跨网络可在前端配置 STUN/TURN。
 
-群通话同样使用 `/calls/signals` 和 `call.signal`，提交 `groupId` 区分群通话。群成员发送 `invite`（含 `type`）后，服务端向其余成员投递邀请；受邀成员发送 `join` 加入，`join`、`leave` 事件包含服务端确认的 `participants` 列表。`offer`、`answer` 的 `id` 指向已入房的对端，服务端只定向转发 SDP；邀请、加入、离开、拒绝、结束与续期的 `id` 使用群 ID。最多 4 人同时入房，音视频由浏览器建立网状连接；加入的成员同时占用一对一通话名额。邀请 60 秒过期，入房成员每 30 秒发送 `keepalive` 维持 90 秒租约。`leave`、`reject` 或普通成员的 `end` 只退出本人；创建者发送 `end` 结束全房。
+群通话同样使用 `/calls/signals` 和 `call.signal`，提交 `groupId` 区分群通话。群成员发送 `invite`（含 `type`）后，服务端向其余成员投递邀请；受邀成员发送 `join` 加入，`join`、`leave` 事件包含服务端确认的 `participants` 列表。`offer`、`answer` 的 `id` 指向已入房的对端，服务端只定向转发 SDP；邀请、加入、离开、拒绝、结束与续期的 `id` 使用群 ID。入房不设固定人数上限，音视频由浏览器建立网状连接；加入的成员同时占用一对一通话名额。邀请 60 秒过期，入房成员每 30 秒发送 `keepalive` 维持 90 秒租约。`leave`、`reject`、`end` 只退出本人（含发起者）；已入房成员退出后不足两人时，服务端广播 `end`。
 
 ## 其他配置
 
